@@ -8,7 +8,7 @@ from http.client import HTTPSConnection
 from pathlib import Path
 from typing import Any
 
-__versiion__ = "0.1.0"
+__version__ = "0.1.0"
 
 
 @dataclass
@@ -88,7 +88,7 @@ def getargs() -> dict[str, Any]:
     x.add_argument("-e", "--env-var", type=token_env, metavar="VAR", dest="token", help="env var name containing API token")
     p.add_argument("-z", "--zone", help="zone name; default is domain name from the first sub-domain")
     p.add_argument("sub_domain", nargs="+", help="sub-domain (e.g. www.example.com)")
-    p.add_argument("--version", action="version", version=__versiion__)
+    p.add_argument("--version", action="version", version=__version__)
 
     return vars(p.parse_args())
 
