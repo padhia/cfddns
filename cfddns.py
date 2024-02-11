@@ -12,9 +12,13 @@ __version__ = "0.1.0"
 
 
 @dataclass
-class EndPoint:
+class CloudflareAPI:
     client: HTTPSConnection
-    headers: dict[str, str]
+    token: str
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"}
 
     def get(self, url: str) -> dict[str, Any]:
         self.client.request("GET", url, headers=self.headers)
@@ -25,26 +29,27 @@ class EndPoint:
         return json.loads(self.client.getresponse().read().decode().strip())
 
 
-def get_zone_id(ep: EndPoint, zone: str) -> str:
+def get_zone_id(ep: CloudflareAPI, zone: str) -> str:
     resp = ep.get(f"/client/v4/zones?name={zone}&status=active")
     return resp["result"][0]["id"]
 
 
-def get_dns_record_id(ep: EndPoint, zone_id: str, dns_record: str) -> str:
+def get_dns_record_id(ep: CloudflareAPI, zone_id: str, dns_record: str) -> str:
     resp = ep.get(f"/client/v4/zones/{zone_id}/dns_records?type=A&name={dns_record}")
     return resp["result"][0]["id"]
 
 
-def update_dns(ep: EndPoint, zone_id: str, dns_record_id: str, dns_record: str, ip: str) -> str:
-    payload = {
-        "content": ip,
-        "name": dns_record,
-        "proxied": False,
-        "type": "A",
-        "ttl": 1,
-    }
-
-    resp = ep.put(f"/client/v4/zones/{zone_id}/dns_records/{dns_record_id}", payload)
+def update_dns(ep: CloudflareAPI, zone_id: str, dns_record_id: str, dns_record: str, ip: str) -> str:
+    resp = ep.put(
+        f"/client/v4/zones/{zone_id}/dns_records/{dns_record_id}",
+        {
+            "content": ip,
+            "name": dns_record,
+            "proxied": False,
+            "type": "A",
+            "ttl": 1,
+        },
+    )
     return f"{resp['result']['name']} -> {resp['result']['content']}" if resp["success"] else resp["errors"]
 
 
@@ -55,20 +60,20 @@ def get_ip() -> str:
     return conn.getresponse().read().decode().strip()
 
 
-def main(token: str, zone: str | None, sub_domain: list[str]) -> None:
+def main(token: str | None, zone: str | None, sub_domain: list[str]) -> None:
     "for each DNS record, update with current IP"
     ip = get_ip()
 
-    ep = EndPoint(HTTPSConnection("api.cloudflare.com"), {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    cf_api = CloudflareAPI(HTTPSConnection("api.cloudflare.com"), token or os.environ["CLOUDFLARE_API_TOKEN"])
 
     if zone is None:
         zone = ".".join(sub_domain[0].rsplit(".", 2)[-2:])
 
     for dns_record in sub_domain:
-        zone_id = get_zone_id(ep, zone)
-        dns_record_id = get_dns_record_id(ep, zone_id, dns_record)
+        zone_id = get_zone_id(cf_api, zone)
+        dns_record_id = get_dns_record_id(cf_api, zone_id, dns_record)
 
-        print(update_dns(ep, zone_id, dns_record_id, dns_record, ip))
+        print(update_dns(cf_api, zone_id, dns_record_id, dns_record, ip))
 
 
 def getargs() -> dict[str, Any]:
@@ -77,16 +82,17 @@ def getargs() -> dict[str, Any]:
             return p.read_text().strip()
         raise ArgumentTypeError("Token could not be read")
 
-    def token_env(s: str) -> str:
-        if s in os.environ:
-            return os.environ[s]
-        raise ArgumentTypeError("Token could not be read")
-
     p = ArgumentParser(description=__doc__)
-    x = p.add_mutually_exclusive_group(required=True)
-    x.add_argument("-f", "--file", type=token_file, metavar="FILE", dest="token", help="file containing the API token")
-    x.add_argument("-e", "--env-var", type=token_env, metavar="VAR", dest="token", help="env var name containing API token")
-    p.add_argument("-z", "--zone", help="zone name; default is domain name from the first sub-domain")
+    p.add_argument(
+        "-f",
+        "--file",
+        type=token_file,
+        metavar="FILE",
+        required="CLOUDFLARE_API_TOKEN" not in os.environ,
+        dest="token",
+        help="file containing Cloudflare API token (default $CLOUDFLARE_API_TOKEN)",
+    )
+    p.add_argument("--zone", help="zone name (default: same as domain name)")
     p.add_argument("sub_domain", nargs="+", help="sub-domain (e.g. www.example.com)")
     p.add_argument("--version", action="version", version=__version__)
 
